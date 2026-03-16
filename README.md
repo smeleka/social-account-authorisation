@@ -50,6 +50,8 @@ Current API groups:
 
 Legacy `link-sessions` routes are still available so the existing UI keeps working while the API surface is being cleaned up.
 
+The current machine-readable API contract lives in [openapi.yaml](/Users/steve/Codex/news-digest/social-account-authorisation/openapi.yaml). It documents only the routes that are implemented today, and it should be updated alongside future API changes.
+
 
 
 ## Admin auth

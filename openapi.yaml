@@ -1,0 +1,1041 @@
+openapi: 3.1.0
+info:
+  title: Social Account Authorisation Hub API
+  version: 0.1.0
+  summary: Implemented API routes for the current Railway deployment
+  description: |
+    This specification documents the currently implemented HTTP API for the
+    Social Account Authorisation Hub. It reflects the code as it exists today,
+    including newer resource-style routes and legacy compatibility routes that
+    still power parts of the hosted UI.
+servers:
+  - url: https://enthusiastic-sparkle-production-1eaf.up.railway.app
+    description: Current Railway deployment
+  - url: http://localhost:3000
+    description: Local development
+security:
+  - adminSession: []
+tags:
+  - name: Health
+  - name: Public
+  - name: Admin
+  - name: Operator
+  - name: Client Sessions
+  - name: Legacy
+components:
+  securitySchemes:
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: auth_admin_session
+      description: |
+        Signed admin session cookie issued by POST /login. Required for admin,
+        operator, and most client-session management endpoints. Public token-based
+        client routes do not require this cookie.
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          oneOf:
+            - type: array
+              items: {}
+            - type: object
+            - type: string
+      required:
+        - error
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        service:
+          type: string
+        at:
+          type: string
+          format: date-time
+      required: [ok, service, at]
+    Provider:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        mode:
+          type: string
+        configured:
+          type: boolean
+        authorizationUrl:
+          type: string
+        docsUrl:
+          type: string
+        warnings:
+          type: array
+          items:
+            type: string
+      required: [id, name, mode, configured]
+    AdminProviderSettings:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        mode:
+          type: string
+        configured:
+          type: boolean
+        docsUrl:
+          type: string
+        settings:
+          type: object
+          additionalProperties: true
+        warnings:
+          type: array
+          items:
+            type: string
+      required: [id, name, mode, configured, settings]
+    ProviderSettingsResponse:
+      type: object
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminProviderSettings'
+      required: [providers]
+    ProviderSettingsUpdateRequest:
+      type: object
+      properties:
+        providerId:
+          type: string
+        clientId:
+          type: string
+        clientSecret:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        developerToken:
+          type: string
+        loginCustomerId:
+          type: string
+        assetDiscoveryUrl:
+          type: string
+        businessAuthUrl:
+          type: string
+        businessTokenUrl:
+          type: string
+      required: [providerId]
+    Asset:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+      required: [id, name, type]
+    SessionConnection:
+      type: object
+      properties:
+        id:
+          type: string
+        providerId:
+          type: string
+        externalUserId:
+          type: string
+        externalUserName:
+          type: string
+          nullable: true
+        connectedAt:
+          type: string
+          format: date-time
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Asset'
+      required: [id, providerId, connectedAt, assets]
+    GrantSelection:
+      type: object
+      properties:
+        providerId:
+          type: string
+        assetId:
+          type: string
+        permissionLevel:
+          type: string
+      required: [providerId, assetId]
+    SessionGrant:
+      type: object
+      properties:
+        id:
+          type: string
+        providerId:
+          type: string
+        assetId:
+          type: string
+        assetName:
+          type: string
+        assetType:
+          type: string
+        permissionLevel:
+          type: string
+        grantedAt:
+          type: string
+          format: date-time
+      required: [id, providerId, assetId, assetName, assetType, permissionLevel, grantedAt]
+    StoredGrant:
+      allOf:
+        - $ref: '#/components/schemas/SessionGrant'
+        - type: object
+          properties:
+            partnerId:
+              type: string
+            partnerName:
+              type: string
+            clientName:
+              type: string
+            clientEmail:
+              type: string
+            sessionId:
+              type: string
+            sessionToken:
+              type: string
+          required: [partnerId, partnerName, clientName, clientEmail, sessionId, sessionToken]
+    ClientSession:
+      type: object
+      properties:
+        id:
+          type: string
+        token:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        partnerId:
+          type: string
+        partnerName:
+          type: string
+        clientName:
+          type: string
+        clientEmail:
+          type: string
+        requestedProviders:
+          type: array
+          items:
+            type: string
+        requestedAccess:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+        availableProviders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Provider'
+        connections:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionConnection'
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionGrant'
+        launchUrl:
+          type: string
+      required:
+        - id
+        - token
+        - status
+        - createdAt
+        - expiresAt
+        - partnerId
+        - partnerName
+        - clientName
+        - clientEmail
+        - requestedProviders
+        - metadata
+        - availableProviders
+        - connections
+        - grants
+        - launchUrl
+    ClientSessionCreateRequest:
+      type: object
+      properties:
+        partnerId:
+          type: string
+        partnerName:
+          type: string
+        clientName:
+          type: string
+        clientEmail:
+          type: string
+          format: email
+        requestedProviders:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
+      required: [partnerId, partnerName, clientName, clientEmail]
+    ClientLinkBuilderCreateRequest:
+      allOf:
+        - $ref: '#/components/schemas/ClientSessionCreateRequest'
+        - type: object
+          properties:
+            requestedAccess:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            notes:
+              type: string
+    SessionStatus:
+      type: object
+      properties:
+        id:
+          type: string
+        token:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        requestedProviders:
+          type: array
+          items:
+            type: string
+        connectedProviderIds:
+          type: array
+          items:
+            type: string
+        connectionCount:
+          type: integer
+        assetCount:
+          type: integer
+        grantCount:
+          type: integer
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, token, status, createdAt, expiresAt, requestedProviders, connectedProviderIds, connectionCount, assetCount, grantCount, completedAt]
+    SessionAssetSummary:
+      type: object
+      properties:
+        providerId:
+          type: string
+        assetId:
+          type: string
+        assetName:
+          type: string
+        assetType:
+          type: string
+        connectionId:
+          type: string
+      required: [providerId, assetId, assetName, assetType, connectionId]
+    OperatorConnection:
+      type: object
+      additionalProperties: true
+      description: |
+        Stored operator connection record. The current implementation returns the
+        persisted object directly, so additional provider-specific fields may appear.
+    OperatorConnectionRequest:
+      type: object
+      properties:
+        providerId:
+          type: string
+      required: [providerId]
+    OperatorConnectionRequestResponse:
+      type: object
+      properties:
+        connectionRequest:
+          type: object
+          properties:
+            providerId:
+              type: string
+            sessionId:
+              type: string
+            sessionToken:
+              type: string
+            launchUrl:
+              type: string
+            status:
+              type: string
+          required: [providerId, sessionId, sessionToken, launchUrl, status]
+        session:
+          $ref: '#/components/schemas/ClientSession'
+      required: [connectionRequest, session]
+    LegacyConnectionRequest:
+      type: object
+      properties:
+        providerId:
+          type: string
+      required: [providerId]
+    LegacyConnectionResponse:
+      type: object
+      properties:
+        state:
+          type: string
+        provider:
+          $ref: '#/components/schemas/Provider'
+        authorizationUrl:
+          type: string
+        instructions:
+          type: string
+      required: [state, provider, authorizationUrl, instructions]
+    LegacyGrantCreateRequest:
+      type: object
+      properties:
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrantSelection'
+      required: [grants]
+    GrantCreateResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        grantCount:
+          type: integer
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionGrant'
+      required: [status, grantCount, grants]
+paths:
+  /health:
+    get:
+      tags: [Health]
+      security: []
+      summary: Health check
+      responses:
+        '200':
+          description: Service health
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/providers:
+    get:
+      tags: [Public]
+      security: []
+      summary: List available providers
+      responses:
+        '200':
+          description: Provider list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Provider'
+                required: [providers]
+  /api/admin/providers:
+    get:
+      tags: [Admin]
+      summary: List provider settings and readiness
+      responses:
+        '200':
+          description: Provider settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderSettingsResponse'
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [Admin]
+      summary: Create or update provider settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderSettingsUpdateRequest'
+      responses:
+        '200':
+          description: Updated provider settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderSettingsResponse'
+        '400':
+          description: Invalid provider payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/admin/operator-session:
+    post:
+      tags: [Admin, Legacy]
+      summary: Create an operator self-connect session (legacy admin route)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperatorConnectionRequest'
+      responses:
+        '201':
+          description: Created session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientSession'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/admin/operator-connections:
+    get:
+      tags: [Admin, Legacy]
+      summary: List operator connections (legacy admin route)
+      responses:
+        '200':
+          description: Operator connections
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connections:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OperatorConnection'
+                required: [connections]
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/admin/client-link-sessions:
+    get:
+      tags: [Admin, Legacy]
+      summary: List client-link builder sessions (legacy admin route)
+      responses:
+        '200':
+          description: Client sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClientSession'
+                required: [sessions]
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [Admin, Legacy]
+      summary: Create a client-link builder session (legacy admin route)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientLinkBuilderCreateRequest'
+      responses:
+        '201':
+          description: Created client session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientSession'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/operator/connections:
+    get:
+      tags: [Operator]
+      summary: List stored operator connections
+      responses:
+        '200':
+          description: Operator connections
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connections:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OperatorConnection'
+                required: [connections]
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [Operator]
+      summary: Create an operator connection request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperatorConnectionRequest'
+      responses:
+        '201':
+          description: Operator connection request created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorConnectionRequestResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/operator/connections/{providerId}:
+    get:
+      tags: [Operator]
+      summary: Get an operator connection by provider id
+      parameters:
+        - in: path
+          name: providerId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Operator connection
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connection:
+                    $ref: '#/components/schemas/OperatorConnection'
+                required: [connection]
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Operator connection not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/client-sessions:
+    post:
+      tags: [Client Sessions]
+      summary: Create a client authorization session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientSessionCreateRequest'
+      responses:
+        '201':
+          description: Client session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientSession'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/client-sessions/{id}:
+    get:
+      tags: [Client Sessions]
+      summary: Get a client session by internal id
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Client session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientSession'
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Client session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/client-sessions/{id}/status:
+    get:
+      tags: [Client Sessions]
+      summary: Get a compact status view for a client session
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    $ref: '#/components/schemas/SessionStatus'
+                required: [session]
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Client session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/client-sessions/{id}/assets:
+    get:
+      tags: [Client Sessions]
+      summary: List discovered assets for a client session
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session assets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  assets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SessionAssetSummary'
+                required: [assets]
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Client session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/client-sessions/{id}/grants:
+    get:
+      tags: [Client Sessions]
+      summary: List stored grants for a client session
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session grants
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  grants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StoredGrant'
+                required: [grants]
+        '401':
+          description: Admin authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Client session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/client-sessions/token/{token}:
+    get:
+      tags: [Client Sessions, Public]
+      security: []
+      summary: Get a client session by public token
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Client session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientSession'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: Session expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/link-sessions:
+    post:
+      tags: [Legacy]
+      security: []
+      summary: Create a client session using the legacy route
+      description: Equivalent to POST /api/client-sessions, retained for compatibility.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientSessionCreateRequest'
+      responses:
+        '201':
+          description: Client session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientSession'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/link-sessions/{token}:
+    get:
+      tags: [Legacy]
+      security: []
+      summary: Get a legacy client session by token
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Client session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientSession'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: Session expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/link-sessions/{token}/connections:
+    post:
+      tags: [Legacy]
+      security: []
+      summary: Start a provider connection for a legacy session token
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LegacyConnectionRequest'
+      responses:
+        '201':
+          description: Authorization handoff created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegacyConnectionResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: Session expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/link-sessions/{token}/grants:
+    post:
+      tags: [Legacy]
+      security: []
+      summary: Submit selected grants for a legacy session token
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LegacyGrantCreateRequest'
+      responses:
+        '201':
+          description: Grants stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantCreateResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: Session expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/partners/{partnerId}/grants:
+    get:
+      tags: [Legacy]
+      security: []
+      summary: List grants by partner id
+      parameters:
+        - in: path
+          name: partnerId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Partner grants
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  grants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StoredGrant'
+                required: [grants]
