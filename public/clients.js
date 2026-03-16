@@ -93,6 +93,10 @@ form.addEventListener('submit', async (event) => {
         clientEmail: data.get('clientEmail'),
         requestedProviders,
         requestedAccess,
+        returnUrl: data.get('returnUrl'),
+        cancelUrl: data.get('cancelUrl'),
+        sourceApp: data.get('sourceApp'),
+        sourceState: data.get('sourceState'),
       }),
     });
     flash('Client link created.', 'success');

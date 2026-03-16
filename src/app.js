@@ -92,6 +92,10 @@ async function sessionSummary(session) {
     clientEmail: session.clientEmail,
     requestedProviders: session.requestedProviders,
     requestedAccess: session.metadata?.requestedAccess || [],
+    returnUrl: session.metadata?.returnUrl || null,
+    cancelUrl: session.metadata?.cancelUrl || null,
+    sourceApp: session.metadata?.sourceApp || null,
+    sourceState: session.metadata?.sourceState || null,
     metadata: session.metadata,
     availableProviders: await listProviders(),
     connections: session.connections.map(serializeConnection),
@@ -125,7 +129,25 @@ function sessionStatusSummary(session) {
     assetCount: session.connections.reduce((total, connection) => total + connection.assets.length, 0),
     grantCount: session.grants.length,
     completedAt: session.status === 'authorized' ? session.grants[0]?.grantedAt || null : null,
+    returnUrl: session.metadata?.returnUrl || null,
+    cancelUrl: session.metadata?.cancelUrl || null,
+    sourceApp: session.metadata?.sourceApp || null,
+    sourceState: session.metadata?.sourceState || null,
   };
+}
+
+function buildHandoffUrl(target, params = {}) {
+  if (!target) {
+    return null;
+  }
+
+  const url = new URL(target);
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
 }
 
 async function createClientSession(input, workspaceId) {
@@ -148,6 +170,13 @@ async function createClientSession(input, workspaceId) {
   const session = await store.createLinkSession({
     ...input,
     requestedProviders,
+    metadata: {
+      ...(input.metadata || {}),
+      returnUrl: input.returnUrl || input.metadata?.returnUrl || '',
+      cancelUrl: input.cancelUrl || input.metadata?.cancelUrl || '',
+      sourceApp: input.sourceApp || input.metadata?.sourceApp || '',
+      sourceState: input.sourceState || input.metadata?.sourceState || '',
+    },
   }, workspaceId);
 
   return { session };
@@ -216,6 +245,8 @@ async function renderLinkPage(session) {
         <aside class="hero-panel">
           <div class="panel-label">Requested providers</div>
           <div id="requested-providers"></div>
+          ${session.metadata?.sourceApp ? `<div class="panel-label">Started from</div><p class="muted">${session.metadata.sourceApp}</p>` : ''}
+          ${session.metadata?.cancelUrl ? `<a class="button-link" href="${buildHandoffUrl(session.metadata.cancelUrl, { status: 'cancelled', sessionId: session.id, token: session.token, sourceState: session.metadata?.sourceState || '', sourceApp: session.metadata?.sourceApp || '' })}">Cancel and return</a>` : ''}
           ${requestedAccess ? `<div class="panel-label">Requested access</div><ul class="plain-list">${requestedAccess}</ul>` : ''}
         </aside>
       </header>
@@ -299,6 +330,10 @@ function renderClientsPage() {
               <label class="field-label">Partner ID<input name="partnerId" value="partner_acme" /></label>
               <label class="field-label">Client name<input name="clientName" placeholder="Northwind" /></label>
               <label class="field-label">Client email<input name="clientEmail" type="email" placeholder="ops@northwind.test" /></label>
+              <label class="field-label">Return URL<input name="returnUrl" type="url" placeholder="https://thingstopost.co.uk/onboarding/complete" /></label>
+              <label class="field-label">Cancel URL<input name="cancelUrl" type="url" placeholder="https://thingstopost.co.uk/onboarding/cancel" /></label>
+              <label class="field-label">Source app<input name="sourceApp" placeholder="Things to Post" /></label>
+              <label class="field-label">Source state<input name="sourceState" placeholder="onboarding_step_social_auth" /></label>
             </div>
             <div id="client-provider-options" class="asset-groups"></div>
             <div class="form-actions">
@@ -649,6 +684,14 @@ async function handleCreateGrant(request, response, token) {
     status: 'authorized',
     grantCount: normalizedGrants.length,
     grants: normalizedGrants,
+    redirectUrl: buildHandoffUrl(session.metadata?.returnUrl, {
+      status: 'authorized',
+      sessionId: session.id,
+      token: session.token,
+      grantCount: normalizedGrants.length,
+      sourceState: session.metadata?.sourceState || '',
+      sourceApp: session.metadata?.sourceApp || '',
+    }),
   });
 }
 
@@ -935,31 +978,20 @@ export async function route(request, response) {
 
     if (request.method === 'POST') {
       const body = await request.json();
-      const required = ['partnerId', 'partnerName', 'clientName', 'clientEmail'];
-      const missing = required.filter((field) => !body[field]);
-      if (missing.length > 0) {
-        return badRequest(response, 'Missing required fields', missing);
-      }
-
-      const requestedProviders = Array.isArray(body.requestedProviders) ? body.requestedProviders : [];
-      if (requestedProviders.length === 0) {
-        return badRequest(response, 'Select at least one provider');
-      }
-
       const workspaceId = await getCurrentWorkspaceId();
-    const session = await store.createLinkSession({
-        partnerId: body.partnerId,
-        partnerName: body.partnerName,
-        clientName: body.clientName,
-        clientEmail: body.clientEmail,
-        requestedProviders,
+      const result = await createClientSession({
+        ...body,
         metadata: {
+          ...(body.metadata || {}),
           source: 'client-link-builder',
           requestedAccess: Array.isArray(body.requestedAccess) ? body.requestedAccess : [],
           notes: body.notes || '',
         },
       }, workspaceId);
-      return json(response, 201, await sessionSummary(session));
+      if (result.error) {
+        return badRequest(response, result.error, result.details);
+      }
+      return json(response, 201, await sessionSummary(result.session));
     }
 
     return methodNotAllowed(response, ['GET', 'POST']);

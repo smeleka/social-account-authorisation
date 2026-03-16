@@ -209,12 +209,17 @@ async function submitGrants(event) {
   state.submitting = true;
   render();
   try {
-    await api(`/api/link-sessions/${token}/grants`, {
+    const result = await api(`/api/link-sessions/${token}/grants`, {
       method: 'POST',
       body: JSON.stringify({ grants: selected }),
     });
     await refreshSession();
     flashBanner('Access approved and stored for the partner.', 'success');
+    if (result.redirectUrl) {
+      window.setTimeout(() => {
+        window.location.assign(result.redirectUrl);
+      }, 900);
+    }
   } catch (error) {
     flashBanner(error.message, 'error');
   } finally {

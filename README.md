@@ -52,6 +52,15 @@ Legacy `link-sessions` routes are still available so the existing UI keeps worki
 
 The current machine-readable API contract lives in [openapi.yaml](/Users/steve/Codex/news-digest/social-account-authorisation/openapi.yaml). It documents only the routes that are implemented today, and it should be updated alongside future API changes.
 
+Client session creation now also supports handoff fields for embedding the flow into a parent product such as Things to Post:
+
+- `returnUrl`
+- `cancelUrl`
+- `sourceApp`
+- `sourceState`
+
+When a hosted client approval flow completes, the app can redirect back to `returnUrl`. When the user cancels from the hosted page, it can redirect back to `cancelUrl`.
+
 
 
 ## Admin auth

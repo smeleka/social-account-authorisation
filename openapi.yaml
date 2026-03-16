@@ -239,6 +239,18 @@ components:
           items:
             type: object
             additionalProperties: true
+        returnUrl:
+          type: string
+          nullable: true
+        cancelUrl:
+          type: string
+          nullable: true
+        sourceApp:
+          type: string
+          nullable: true
+        sourceState:
+          type: string
+          nullable: true
         metadata:
           type: object
           additionalProperties: true
@@ -267,6 +279,10 @@ components:
         - clientName
         - clientEmail
         - requestedProviders
+        - returnUrl
+        - cancelUrl
+        - sourceApp
+        - sourceState
         - metadata
         - availableProviders
         - connections
@@ -288,6 +304,16 @@ components:
           type: array
           items:
             type: string
+        returnUrl:
+          type: string
+          format: uri
+        cancelUrl:
+          type: string
+          format: uri
+        sourceApp:
+          type: string
+        sourceState:
+          type: string
         metadata:
           type: object
           additionalProperties: true
@@ -337,7 +363,19 @@ components:
           type: string
           format: date-time
           nullable: true
-      required: [id, token, status, createdAt, expiresAt, requestedProviders, connectedProviderIds, connectionCount, assetCount, grantCount, completedAt]
+        returnUrl:
+          type: string
+          nullable: true
+        cancelUrl:
+          type: string
+          nullable: true
+        sourceApp:
+          type: string
+          nullable: true
+        sourceState:
+          type: string
+          nullable: true
+      required: [id, token, status, createdAt, expiresAt, requestedProviders, connectedProviderIds, connectionCount, assetCount, grantCount, completedAt, returnUrl, cancelUrl, sourceApp, sourceState]
     SessionAssetSummary:
       type: object
       properties:
@@ -421,7 +459,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SessionGrant'
-      required: [status, grantCount, grants]
+        redirectUrl:
+          type: string
+          nullable: true
+      required: [status, grantCount, grants, redirectUrl]
 paths:
   /health:
     get:
