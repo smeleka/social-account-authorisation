@@ -32,6 +32,30 @@ Server defaults to `http://localhost:3000`.
 - `/health` health check
 
 
+
+## Admin auth
+
+Admin auth is now supported for the operational surfaces:
+
+- `/settings`
+- `/operator`
+- `/clients`
+- `/api/admin/*`
+
+It becomes active when `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ADMIN_SESSION_SECRET` are all set.
+
+`ADMIN_AUTH_ENABLED=true` is available as an explicit toggle for hosted environments, but the credentials and session secret are still required either way.
+
+Recommended Railway variables:
+
+- `ADMIN_AUTH_ENABLED=true`
+- `ADMIN_EMAIL=<your-admin-email>`
+- `ADMIN_PASSWORD=<strong-password>`
+- `ADMIN_SESSION_SECRET=<long-random-secret>`
+- `ADMIN_SESSION_TTL_HOURS=24`
+
+Public client approval links remain accessible without admin login.
+
 ## Current storage mode
 
 The app now supports two storage backends:

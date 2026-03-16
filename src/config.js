@@ -52,6 +52,20 @@ export const config = {
   dataDir: path.resolve(process.cwd(), env.DATA_DIR || './data'),
   allowDemoProviderAuth: bool(env.ALLOW_DEMO_PROVIDER_AUTH, true),
   providerDiscoveryFallback: bool(env.PROVIDER_DISCOVERY_FALLBACK, true),
+  admin: (() => {
+    const email = env.ADMIN_EMAIL || '';
+    const password = env.ADMIN_PASSWORD || '';
+    const sessionSecret = env.ADMIN_SESSION_SECRET || '';
+    const configured = Boolean(email && password && sessionSecret);
+    return {
+      email,
+      password,
+      sessionSecret,
+      sessionTtlHours: Number(env.ADMIN_SESSION_TTL_HOURS || 24),
+      configured,
+      enabled: bool(env.ADMIN_AUTH_ENABLED, configured) && configured,
+    };
+  })(),
   defaultWorkspace: {
     id: env.DEFAULT_WORKSPACE_ID || 'ws_default',
     slug: env.DEFAULT_WORKSPACE_SLUG || 'default',

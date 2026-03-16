@@ -2,14 +2,81 @@ import { config } from './config.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { exchangeAuthorizationCode, getProvider, listProviders, createAuthorizationUrl, listProviderSettingsForAdmin, serializeConnection } from './providers/index.js';
+import { clearAdminSessionCookie, createAdminSessionCookie, isAdminAuthEnabled, verifyAdminCredentials, verifyAdminRequest } from './auth/admin.js';
 import { getCurrentWorkspaceId } from './lib/context.js';
 import { store } from './lib/store.js';
-import { addMinutes, badRequest, generateId, html, json, methodNotAllowed, notFound, nowIso } from './lib/utils.js';
+import { addMinutes, badRequest, generateId, html, json, methodNotAllowed, notFound, nowIso, readTextBody } from './lib/utils.js';
 
 const PUBLIC_DIR = path.resolve(process.cwd(), 'public');
 
 function parseUrl(request) {
   return new URL(request.url, config.baseUrl);
+}
+
+function renderLoginPage(errorMessage = '') {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${config.appName} Login</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <main class="grid settings-grid">
+        <section class="surface settings-surface">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Admin Access</p>
+              <h2>Sign in to manage the auth service</h2>
+            </div>
+          </div>
+          <form method="post" action="/login" class="asset-groups">
+            <div class="settings-fields">
+              <label class="field-label">Email<input type="email" name="email" /></label>
+              <label class="field-label">Password<input type="password" name="password" /></label>
+            </div>
+            ${errorMessage ? `<p class="empty-state">${errorMessage}</p>` : ''}
+            <div class="form-actions">
+              <button type="submit">Sign in</button>
+            </div>
+          </form>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>`;
+}
+
+function wantsJson(request) {
+  return (request.headers.accept || '').includes('application/json') || request.url.startsWith('/api/');
+}
+
+function redirectToLogin(response) {
+  response.writeHead(302, {
+    location: '/login',
+    'cache-control': 'no-store',
+  });
+  response.end();
+}
+
+function requireAdmin(request, response) {
+  if (!isAdminAuthEnabled()) {
+    return true;
+  }
+
+  const auth = verifyAdminRequest(request);
+  if (auth.ok) {
+    return true;
+  }
+
+  if (wantsJson(request)) {
+    json(response, 401, { error: 'Admin authentication required' });
+  } else {
+    redirectToLogin(response);
+  }
+  return false;
 }
 
 async function sessionSummary(session) {
@@ -624,6 +691,53 @@ export async function route(request, response) {
   const url = parseUrl(request);
   const pathname = url.pathname;
 
+  if (pathname === '/login') {
+    if (request.method === 'GET') {
+      if (verifyAdminRequest(request).ok) {
+        response.writeHead(302, {
+          location: '/operator',
+          'cache-control': 'no-store',
+        });
+        response.end();
+        return;
+      }
+      return html(response, 200, renderLoginPage());
+    }
+
+    if (request.method === 'POST') {
+      const body = await readTextBody(request);
+      const params = new URLSearchParams(body);
+      const email = params.get('email') || '';
+      const password = params.get('password') || '';
+      if (!verifyAdminCredentials(email, password)) {
+        return html(response, 401, renderLoginPage('Invalid admin credentials.'));
+      }
+
+      response.writeHead(302, {
+        location: '/operator',
+        'cache-control': 'no-store',
+        'set-cookie': createAdminSessionCookie(),
+      });
+      response.end();
+      return;
+    }
+
+    return methodNotAllowed(response, ['GET', 'POST']);
+  }
+
+  if (pathname === '/logout') {
+    if (request.method !== 'GET') {
+      return methodNotAllowed(response, ['GET']);
+    }
+    response.writeHead(302, {
+      location: '/login',
+      'cache-control': 'no-store',
+      'set-cookie': clearAdminSessionCookie(),
+    });
+    response.end();
+    return;
+  }
+
   if (pathname === '/') {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
@@ -635,6 +749,9 @@ export async function route(request, response) {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
     }
+    if (!requireAdmin(request, response)) {
+      return;
+    }
     return html(response, 200, renderSettingsPage());
   }
 
@@ -642,12 +759,18 @@ export async function route(request, response) {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
     }
+    if (!requireAdmin(request, response)) {
+      return;
+    }
     return html(response, 200, renderOperatorPage());
   }
 
   if (pathname === '/clients') {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
+    }
+    if (!requireAdmin(request, response)) {
+      return;
     }
     return html(response, 200, renderClientsPage());
   }
@@ -699,6 +822,9 @@ export async function route(request, response) {
   }
 
   if (pathname === '/api/admin/providers') {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
     if (request.method === 'GET') {
       return json(response, 200, await providerSettingsResponse());
     }
@@ -719,6 +845,9 @@ export async function route(request, response) {
   }
 
   if (pathname === '/api/admin/operator-session' && request.method === 'POST') {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
     const body = await request.json();
     const providerId = body.providerId;
     if (!(await getProvider(providerId))) {
@@ -740,11 +869,17 @@ export async function route(request, response) {
   }
 
   if (pathname === '/api/admin/operator-connections' && request.method === 'GET') {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
     const workspaceId = await getCurrentWorkspaceId();
     return json(response, 200, { connections: await store.listOperatorConnections(workspaceId) });
   }
 
   if (pathname === '/api/admin/client-link-sessions') {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
     if (request.method === 'GET') {
       return json(response, 200, {
         sessions: await Promise.all((await store.listLinkSessionsBySource('client-link-builder', await getCurrentWorkspaceId())).map((session) => sessionSummary(session))),
