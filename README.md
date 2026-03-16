@@ -31,6 +31,16 @@ Server defaults to `http://localhost:3000`.
 - `/settings` advanced provider app setup for self-hosting
 - `/health` health check
 
+
+## Current storage mode
+
+The app now supports two storage backends:
+
+- JSON fallback when `DATABASE_URL` is not set
+- Postgres when `DATABASE_URL` is set
+
+A default workspace is created automatically and current records are scoped to that workspace. This keeps the app single-tenant in practice for now, while making it easier to add future tiers later.
+
 ## Railway preparation
 
 This project is prepared to run on Railway as a Node service.
@@ -51,6 +61,7 @@ This project is prepared to run on Railway as a Node service.
 
 Set these in Railway:
 
+- `DATABASE_URL=<railway-postgres-connection-string>` if you add Railway Postgres
 - `PORT=3000`
 - `HOST=0.0.0.0`
 - `BASE_URL=https://<your-railway-domain>`

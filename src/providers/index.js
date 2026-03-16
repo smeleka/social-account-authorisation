@@ -1,6 +1,7 @@
 import { config, envProviderDefaults } from '../config.js';
+import { getCurrentWorkspaceId } from '../lib/context.js';
 import { store } from '../lib/store.js';
-import { generateId, generateToken, nowIso, redactSecret } from '../lib/utils.js';
+import { generateToken, nowIso, redactSecret } from '../lib/utils.js';
 
 const providerCatalog = {
   facebook: {
@@ -29,12 +30,13 @@ const providerCatalog = {
   },
 };
 
-function providerSettings(providerId) {
+async function providerSettings(providerId) {
   const defaults = envProviderDefaults[providerId] || null;
   if (!defaults) {
     return null;
   }
-  const runtime = store.getProviderSettings()[providerId] || {};
+  const workspaceId = await getCurrentWorkspaceId();
+  const runtime = (await store.getProviderSettings(workspaceId))[providerId] || {};
   return {
     ...defaults,
     ...runtime,
@@ -42,26 +44,26 @@ function providerSettings(providerId) {
   };
 }
 
-function configuredScopes(providerId) {
+async function configuredScopes(providerId) {
   const provider = providerCatalog[providerId];
-  const settings = providerSettings(providerId) || {};
-  return settings.scopes && settings.scopes.length > 0 ? settings.scopes : provider.scopes;
+  const settings = await providerSettings(providerId);
+  return settings?.scopes && settings.scopes.length > 0 ? settings.scopes : provider.scopes;
 }
 
 function redirectUri(providerId) {
   return `${config.baseUrl}/oauth/${providerId}/callback`;
 }
 
-function isConfigured(providerId) {
-  const settings = providerSettings(providerId);
+async function isConfigured(providerId) {
+  const settings = await providerSettings(providerId);
   return Boolean(settings?.clientId && settings?.clientSecret);
 }
 
-function withMetadata(provider) {
-  const configured = isConfigured(provider.id);
+async function withMetadata(provider) {
+  const configured = await isConfigured(provider.id);
   return {
     ...provider,
-    scopes: configuredScopes(provider.id),
+    scopes: await configuredScopes(provider.id),
     configured,
     mode: configured ? 'live' : (config.allowDemoProviderAuth ? 'demo' : 'unavailable'),
   };
@@ -120,26 +122,24 @@ async function discoverFacebookAssets(accessToken) {
     requestJson(`https://graph.facebook.com/v19.0/me/businesses?fields=id,name&access_token=${encodeURIComponent(accessToken)}`),
   ]);
 
-  const assets = [
-    ...(businessesResponse.data || []).map((item) => ({ id: item.id, type: 'business_manager', name: item.name })),
-    ...(adAccountsResponse.data || []).map((item) => ({ id: item.id, type: 'ad_account', name: item.name })),
-    ...(pagesResponse.data || []).map((item) => ({ id: item.id, type: 'facebook_page', name: item.name })),
-  ];
-
   return {
     externalUserId: me.id,
     externalUserName: me.name,
-    assets,
+    assets: [
+      ...(businessesResponse.data || []).map((item) => ({ id: item.id, type: 'business_manager', name: item.name })),
+      ...(adAccountsResponse.data || []).map((item) => ({ id: item.id, type: 'ad_account', name: item.name })),
+      ...(pagesResponse.data || []).map((item) => ({ id: item.id, type: 'facebook_page', name: item.name })),
+    ],
   };
 }
 
 async function discoverGoogleAdsAssets(accessToken) {
-  const settings = providerSettings('google-ads');
+  const settings = await providerSettings('google-ads');
   const user = await requestJson('https://openidconnect.googleapis.com/v1/userinfo', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
-  if (!settings.developerToken) {
+  if (!settings?.developerToken) {
     return {
       externalUserId: user.sub || user.email,
       externalUserName: user.name || user.email,
@@ -157,25 +157,24 @@ async function discoverGoogleAdsAssets(accessToken) {
   }
 
   const customers = await requestJson('https://googleads.googleapis.com/v18/customers:listAccessibleCustomers', { headers });
-  const assets = (customers.resourceNames || []).map((resourceName) => ({
-    id: resourceName.split('/').pop(),
-    type: 'ad_account',
-    name: resourceName,
-  }));
-
   return {
     externalUserId: user.sub || user.email,
     externalUserName: user.name || user.email,
-    assets,
+    assets: (customers.resourceNames || []).map((resourceName) => ({
+      id: resourceName.split('/').pop(),
+      type: 'ad_account',
+      name: resourceName,
+    })),
   };
 }
 
 async function discoverLinkedInAssets(accessToken) {
+  const settings = await providerSettings('linkedin');
   const user = await requestJson('https://api.linkedin.com/v2/userinfo', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
-  if (!providerSettings('linkedin').assetDiscoveryUrl) {
+  if (!settings?.assetDiscoveryUrl) {
     return {
       externalUserId: user.sub || user.email,
       externalUserName: user.name || user.email,
@@ -184,7 +183,7 @@ async function discoverLinkedInAssets(accessToken) {
     };
   }
 
-  const data = await requestJson(providerSettings('linkedin').assetDiscoveryUrl, {
+  const data = await requestJson(settings.assetDiscoveryUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
@@ -196,6 +195,7 @@ async function discoverLinkedInAssets(accessToken) {
 }
 
 async function discoverTikTokAssets(accessToken) {
+  const settings = await providerSettings('tiktok');
   let profile = null;
   try {
     profile = await requestJson('https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url', {
@@ -205,7 +205,7 @@ async function discoverTikTokAssets(accessToken) {
     profile = null;
   }
 
-  if (!providerSettings('tiktok').assetDiscoveryUrl) {
+  if (!settings?.assetDiscoveryUrl) {
     return {
       externalUserId: profile?.data?.user?.open_id || 'tiktok-user',
       externalUserName: profile?.data?.user?.display_name || 'TikTok User',
@@ -214,7 +214,7 @@ async function discoverTikTokAssets(accessToken) {
     };
   }
 
-  const data = await requestJson(providerSettings('tiktok').assetDiscoveryUrl, {
+  const data = await requestJson(settings.assetDiscoveryUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
@@ -225,17 +225,17 @@ async function discoverTikTokAssets(accessToken) {
   };
 }
 
-export function listProviders() {
-  return Object.values(providerCatalog).map(withMetadata);
+export async function listProviders() {
+  return Promise.all(Object.values(providerCatalog).map(withMetadata));
 }
 
-export function getProvider(providerId) {
+export async function getProvider(providerId) {
   const provider = providerCatalog[providerId] || null;
   return provider ? withMetadata(provider) : null;
 }
 
-export function createAuthorizationUrl({ providerId, stateId }) {
-  const provider = getProvider(providerId);
+export async function createAuthorizationUrl({ providerId, stateId }) {
+  const provider = await getProvider(providerId);
   if (!provider) {
     throw new Error(`Unsupported provider: ${providerId}`);
   }
@@ -244,19 +244,11 @@ export function createAuthorizationUrl({ providerId, stateId }) {
   }
   if (!provider.configured && config.allowDemoProviderAuth) {
     const demoUrl = new URL(`${config.baseUrl}/oauth/${providerId}/callback`);
-    demoUrl.search = toUrlEncoded({
-      code: `demo_code_${providerId}`,
-      state: stateId,
-      demo: '1',
-    }).toString();
-    return {
-      stateId,
-      url: demoUrl.toString(),
-      provider,
-    };
+    demoUrl.search = toUrlEncoded({ code: `demo_code_${providerId}`, state: stateId, demo: '1' }).toString();
+    return { stateId, url: demoUrl.toString(), provider };
   }
 
-  const state = stateId;
+  const settings = await providerSettings(providerId);
   const url = new URL(
     providerId === 'facebook'
       ? 'https://www.facebook.com/v19.0/dialog/oauth'
@@ -264,75 +256,42 @@ export function createAuthorizationUrl({ providerId, stateId }) {
         ? 'https://accounts.google.com/o/oauth2/v2/auth'
         : providerId === 'linkedin'
           ? 'https://www.linkedin.com/oauth/v2/authorization'
-          : (providerSettings('tiktok').businessAuthUrl || 'https://www.tiktok.com/v2/auth/authorize/')
+          : (settings.businessAuthUrl || 'https://www.tiktok.com/v2/auth/authorize/')
   );
 
   if (providerId === 'facebook') {
-    url.search = toUrlEncoded({
-      client_id: providerSettings('facebook').clientId,
-      redirect_uri: redirectUri(providerId),
-      state,
-      scope: configuredScopes(providerId).join(','),
-      response_type: 'code',
-    }).toString();
+    url.search = toUrlEncoded({ client_id: settings.clientId, redirect_uri: redirectUri(providerId), state: stateId, scope: (await configuredScopes(providerId)).join(','), response_type: 'code' }).toString();
   } else if (providerId === 'google-ads') {
-    url.search = toUrlEncoded({
-      client_id: providerSettings('google-ads').clientId,
-      redirect_uri: redirectUri(providerId),
-      response_type: 'code',
-      access_type: 'offline',
-      prompt: 'consent',
-      state,
-      scope: configuredScopes(providerId).join(' '),
-      include_granted_scopes: 'true',
-    }).toString();
+    url.search = toUrlEncoded({ client_id: settings.clientId, redirect_uri: redirectUri(providerId), response_type: 'code', access_type: 'offline', prompt: 'consent', state: stateId, scope: (await configuredScopes(providerId)).join(' '), include_granted_scopes: 'true' }).toString();
   } else if (providerId === 'linkedin') {
-    url.search = toUrlEncoded({
-      response_type: 'code',
-      client_id: providerSettings('linkedin').clientId,
-      redirect_uri: redirectUri(providerId),
-      state,
-      scope: configuredScopes(providerId).join(' '),
-    }).toString();
+    url.search = toUrlEncoded({ response_type: 'code', client_id: settings.clientId, redirect_uri: redirectUri(providerId), state: stateId, scope: (await configuredScopes(providerId)).join(' ') }).toString();
   } else {
-    url.search = toUrlEncoded({
-      client_key: providerSettings('tiktok').clientId,
-      redirect_uri: redirectUri(providerId),
-      response_type: 'code',
-      state,
-      scope: configuredScopes(providerId).join(','),
-    }).toString();
+    url.search = toUrlEncoded({ client_key: settings.clientId, redirect_uri: redirectUri(providerId), response_type: 'code', state: stateId, scope: (await configuredScopes(providerId)).join(',') }).toString();
   }
 
-  return {
-    stateId,
-    url: url.toString(),
-    provider,
-  };
+  return { stateId, url: url.toString(), provider };
 }
 
 export async function exchangeAuthorizationCode({ providerId, code }) {
+  const provider = await getProvider(providerId);
   if (code.startsWith('demo_code_')) {
     return {
       providerId,
       externalUserId: `${providerId}_demo_user`,
-      externalUserName: `${getProvider(providerId)?.name || providerId} Demo User`,
+      externalUserName: `${provider?.name || providerId} Demo User`,
       accessToken: generateToken(24),
       refreshToken: generateToken(24),
       tokenExpiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 60).toISOString(),
       connectedAt: nowIso(),
       assets: fakeAssetsForProvider(providerId),
-      discoveryWarning: `Demo mode is active for ${getProvider(providerId)?.name || providerId}. Add provider credentials in .env to use real OAuth.`,
+      discoveryWarning: `Demo mode is active for ${provider?.name || providerId}. Add provider credentials in settings or env vars to use real OAuth.`,
     };
   }
 
+  const settings = await providerSettings(providerId);
+
   if (providerId === 'facebook') {
-    const token = await requestJson(`https://graph.facebook.com/v19.0/oauth/access_token?${toUrlEncoded({
-      client_id: providerSettings('facebook').clientId,
-      client_secret: providerSettings('facebook').clientSecret,
-      redirect_uri: redirectUri(providerId),
-      code,
-    }).toString()}`);
+    const token = await requestJson(`https://graph.facebook.com/v19.0/oauth/access_token?${toUrlEncoded({ client_id: settings.clientId, client_secret: settings.clientSecret, redirect_uri: redirectUri(providerId), code }).toString()}`);
     const discovery = await discoverFacebookAssets(token.access_token);
     return {
       providerId,
@@ -351,13 +310,7 @@ export async function exchangeAuthorizationCode({ providerId, code }) {
     const token = await requestJson('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: toUrlEncoded({
-        client_id: providerSettings('google-ads').clientId,
-        client_secret: providerSettings('google-ads').clientSecret,
-        code,
-        grant_type: 'authorization_code',
-        redirect_uri: redirectUri(providerId),
-      }),
+      body: toUrlEncoded({ client_id: settings.clientId, client_secret: settings.clientSecret, code, grant_type: 'authorization_code', redirect_uri: redirectUri(providerId) }),
     });
     const discovery = await discoverGoogleAdsAssets(token.access_token);
     return {
@@ -377,13 +330,7 @@ export async function exchangeAuthorizationCode({ providerId, code }) {
     const token = await requestJson('https://www.linkedin.com/oauth/v2/accessToken', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: toUrlEncoded({
-        grant_type: 'authorization_code',
-        code,
-        client_id: providerSettings('linkedin').clientId,
-        client_secret: providerSettings('linkedin').clientSecret,
-        redirect_uri: redirectUri(providerId),
-      }),
+      body: toUrlEncoded({ grant_type: 'authorization_code', code, client_id: settings.clientId, client_secret: settings.clientSecret, redirect_uri: redirectUri(providerId) }),
     });
     const discovery = await discoverLinkedInAssets(token.access_token);
     return {
@@ -400,17 +347,11 @@ export async function exchangeAuthorizationCode({ providerId, code }) {
   }
 
   if (providerId === 'tiktok') {
-    const tokenUrl = providerSettings('tiktok').businessTokenUrl || 'https://open.tiktokapis.com/v2/oauth/token/';
+    const tokenUrl = settings.businessTokenUrl || 'https://open.tiktokapis.com/v2/oauth/token/';
     const token = await requestJson(tokenUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: toUrlEncoded({
-        client_key: providerSettings('tiktok').clientId,
-        client_secret: providerSettings('tiktok').clientSecret,
-        code,
-        grant_type: 'authorization_code',
-        redirect_uri: redirectUri(providerId),
-      }),
+      body: toUrlEncoded({ client_key: settings.clientId, client_secret: settings.clientSecret, code, grant_type: 'authorization_code', redirect_uri: redirectUri(providerId) }),
     });
     const discovery = await discoverTikTokAssets(token.access_token);
     return {
@@ -433,7 +374,7 @@ export function serializeConnection(connection) {
   return {
     id: connection.id,
     providerId: connection.providerId,
-    providerName: getProvider(connection.providerId)?.name || connection.providerId,
+    providerName: providerCatalog[connection.providerId]?.name || connection.providerId,
     externalUserId: connection.externalUserId,
     externalUserName: connection.externalUserName || null,
     connectedAt: connection.connectedAt,
@@ -445,16 +386,19 @@ export function serializeConnection(connection) {
   };
 }
 
-export function listProviderSettingsForAdmin() {
-  return listProviders().map((provider) => {
-    const settings = providerSettings(provider.id) || {};
+export async function listProviderSettingsForAdmin() {
+  const workspaceId = await getCurrentWorkspaceId();
+  const settingsByProvider = await store.getProviderSettings(workspaceId);
+  const providers = await listProviders();
+  return Promise.all(providers.map(async (provider) => {
+    const settings = settingsByProvider[provider.id] || {};
     return {
       id: provider.id,
       name: provider.name,
       configured: provider.configured,
       mode: provider.mode,
       docs: provider.docs,
-      scopes: configuredScopes(provider.id),
+      scopes: await configuredScopes(provider.id),
       settings: {
         clientId: settings.clientId || '',
         hasClientSecret: Boolean(settings.clientSecret),
@@ -465,5 +409,5 @@ export function listProviderSettingsForAdmin() {
         businessTokenUrl: settings.businessTokenUrl || '',
       },
     };
-  });
+  }));
 }

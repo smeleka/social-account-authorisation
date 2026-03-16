@@ -47,8 +47,17 @@ export const config = {
   host: env.HOST || '0.0.0.0',
   baseUrl: env.BASE_URL || 'http://localhost:3000',
   appName: env.APP_NAME || 'Authorisation Hub',
+  databaseUrl: env.DATABASE_URL || '',
   sessionTtlMinutes: Number(env.SESSION_TTL_MINUTES || 30),
   dataDir: path.resolve(process.cwd(), env.DATA_DIR || './data'),
   allowDemoProviderAuth: bool(env.ALLOW_DEMO_PROVIDER_AUTH, true),
   providerDiscoveryFallback: bool(env.PROVIDER_DISCOVERY_FALLBACK, true),
+  defaultWorkspace: {
+    id: env.DEFAULT_WORKSPACE_ID || 'ws_default',
+    slug: env.DEFAULT_WORKSPACE_SLUG || 'default',
+    name: env.DEFAULT_WORKSPACE_NAME || 'Default Workspace',
+    brandName: env.DEFAULT_WORKSPACE_BRAND_NAME || 'Things to Post',
+    primaryDomain: env.DEFAULT_WORKSPACE_PRIMARY_DOMAIN || '',
+    supportEmail: env.DEFAULT_WORKSPACE_SUPPORT_EMAIL || '',
+  },
 };

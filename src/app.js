@@ -2,6 +2,7 @@ import { config } from './config.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { exchangeAuthorizationCode, getProvider, listProviders, createAuthorizationUrl, listProviderSettingsForAdmin, serializeConnection } from './providers/index.js';
+import { getCurrentWorkspaceId } from './lib/context.js';
 import { store } from './lib/store.js';
 import { addMinutes, badRequest, generateId, html, json, methodNotAllowed, notFound, nowIso } from './lib/utils.js';
 
@@ -11,7 +12,7 @@ function parseUrl(request) {
   return new URL(request.url, config.baseUrl);
 }
 
-function sessionSummary(session) {
+async function sessionSummary(session) {
   return {
     id: session.id,
     token: session.token,
@@ -25,7 +26,7 @@ function sessionSummary(session) {
     requestedProviders: session.requestedProviders,
     requestedAccess: session.metadata?.requestedAccess || [],
     metadata: session.metadata,
-    availableProviders: listProviders(),
+    availableProviders: await listProviders(),
     connections: session.connections.map(serializeConnection),
     grants: session.grants,
     launchUrl: `${config.baseUrl}/link/${session.token}`,
@@ -46,7 +47,7 @@ function validateSession(session, response) {
   return true;
 }
 
-function renderLinkPage(session) {
+async function renderLinkPage(session) {
   const requestedAccess = (session.metadata?.requestedAccess || [])
     .map((item) => `<li>${item.providerId}: ${item.permissionLevel} access for ${item.assetTypes.join(', ')}</li>`)
     .join('');
@@ -114,7 +115,7 @@ function renderLinkPage(session) {
       </main>
     </div>
     <script>
-      window.__SESSION__ = ${JSON.stringify(sessionSummary(session))};
+      window.__SESSION__ = ${JSON.stringify(await sessionSummary(session))};
     </script>
     <script type="module" src="/app.js"></script>
   </body>
@@ -375,9 +376,9 @@ function normalizeProviderSettings(providerId, body) {
   return common;
 }
 
-function providerSettingsResponse() {
+async function providerSettingsResponse() {
   return {
-    providers: listProviderSettingsForAdmin(),
+    providers: await listProviderSettingsForAdmin(),
   };
 }
 
@@ -406,43 +407,47 @@ async function handleCreateSession(request, response) {
     ? body.requestedProviders
     : ['facebook'];
 
-  const invalidProviders = requestedProviders.filter((providerId) => !getProvider(providerId));
+  const availableProviders = await listProviders();
+  const invalidProviders = requestedProviders.filter((providerId) => !availableProviders.find((provider) => provider.id === providerId));
   if (invalidProviders.length > 0) {
     return badRequest(response, 'Unsupported providers requested', invalidProviders);
   }
 
-  const session = store.createLinkSession({
+  const workspaceId = await getCurrentWorkspaceId();
+  const session = await store.createLinkSession({
     ...body,
     requestedProviders,
-  });
+  }, workspaceId);
 
-  return json(response, 201, sessionSummary(session));
+  return json(response, 201, await sessionSummary(session));
 }
 
 async function handleCreateConnection(request, response, token) {
-  const session = store.getLinkSessionByToken(token);
+  const workspaceId = await getCurrentWorkspaceId();
+  const session = await store.getLinkSessionByToken(token, workspaceId);
   if (!validateSession(session, response)) {
     return;
   }
 
   const body = await request.json();
   const providerId = body.providerId;
-  const provider = getProvider(providerId);
+  const provider = await getProvider(providerId);
   if (!provider) {
     return badRequest(response, 'Unsupported provider');
   }
 
   const stateId = generateId('state');
-  const auth = createAuthorizationUrl({ providerId, stateId });
-  store.createConnectionState({
+  const auth = await createAuthorizationUrl({ providerId, stateId });
+  await store.createConnectionState({
     id: stateId,
     sessionToken: token,
+    workspaceId,
     providerId,
     createdAt: nowIso(),
     expiresAt: addMinutes(nowIso(), 10),
   });
 
-  store.updateLinkSession(token, (draft) => {
+  await store.updateLinkSession(token, workspaceId, (draft) => {
     draft.auditLog.push({ at: nowIso(), action: 'provider_connection_started', actor: 'client', providerId });
   });
 
@@ -455,7 +460,8 @@ async function handleCreateConnection(request, response, token) {
 }
 
 async function handleCreateGrant(request, response, token) {
-  const session = store.getLinkSessionByToken(token);
+  const workspaceId = await getCurrentWorkspaceId();
+  const session = await store.getLinkSessionByToken(token, workspaceId);
   if (!validateSession(session, response)) {
     return;
   }
@@ -495,14 +501,14 @@ async function handleCreateGrant(request, response, token) {
     };
   });
 
-  store.updateLinkSession(token, (draft) => {
+  await store.updateLinkSession(token, workspaceId, (draft) => {
     draft.status = 'authorized';
     draft.grants = normalizedGrants;
     draft.auditLog.push({ at: nowIso(), action: 'grants_confirmed', actor: 'client', grantCount: normalizedGrants.length });
   });
 
   for (const grant of normalizedGrants) {
-    store.upsertGrant({
+    await store.upsertGrant({
       ...grant,
       id: `${session.partnerId}_${session.id}_${grant.assetId}`,
       partnerId: session.partnerId,
@@ -511,7 +517,7 @@ async function handleCreateGrant(request, response, token) {
       clientEmail: session.clientEmail,
       sessionId: session.id,
       sessionToken: session.token,
-    });
+    }, workspaceId);
   }
 
   json(response, 201, {
@@ -529,9 +535,9 @@ async function handleOauthCallback(response, providerId, query) {
     return badRequest(response, 'Missing OAuth state');
   }
   if (error) {
-    const state = store.consumeConnectionState(stateId);
+    const state = await store.consumeConnectionState(stateId);
     if (state) {
-      store.updateLinkSession(state.sessionToken, (draft) => {
+      await store.updateLinkSession(state.sessionToken, state.workspaceId, (draft) => {
         draft.auditLog.push({ at: nowIso(), action: 'provider_connection_failed', actor: 'provider', providerId, error });
       });
     }
@@ -546,7 +552,7 @@ async function handleOauthCallback(response, providerId, query) {
     return badRequest(response, 'Missing OAuth code');
   }
 
-  const state = store.consumeConnectionState(stateId);
+  const state = await store.consumeConnectionState(stateId);
   if (!state) {
     return badRequest(response, 'Unknown or expired state');
   }
@@ -554,7 +560,7 @@ async function handleOauthCallback(response, providerId, query) {
     return badRequest(response, 'Expired OAuth state');
   }
 
-  const session = store.getLinkSessionByToken(state.sessionToken);
+  const session = await store.getLinkSessionByToken(state.sessionToken, state.workspaceId);
   if (!validateSession(session, response)) {
     return;
   }
@@ -563,7 +569,7 @@ async function handleOauthCallback(response, providerId, query) {
   try {
     tokens = await exchangeAuthorizationCode({ providerId, code });
   } catch (exchangeError) {
-    store.updateLinkSession(state.sessionToken, (draft) => {
+    await store.updateLinkSession(state.sessionToken, state.workspaceId, (draft) => {
       draft.auditLog.push({
         at: nowIso(),
         action: 'provider_connection_failed',
@@ -585,7 +591,7 @@ async function handleOauthCallback(response, providerId, query) {
     ...tokens,
   };
 
-  store.updateLinkSession(state.sessionToken, (draft) => {
+  await store.updateLinkSession(state.sessionToken, state.workspaceId, (draft) => {
     draft.status = 'connected';
     draft.connections = draft.connections.filter((item) => item.providerId !== providerId);
     draft.connections.push(connection);
@@ -593,16 +599,17 @@ async function handleOauthCallback(response, providerId, query) {
   });
 
   if (session.metadata?.mode === 'operator-self-connect') {
-    store.upsertOperatorConnection({
+    const provider = await getProvider(providerId);
+    await store.upsertOperatorConnection({
       providerId,
-      providerName: getProvider(providerId)?.name || providerId,
+      providerName: provider?.name || providerId,
       externalUserId: connection.externalUserId,
       externalUserName: connection.externalUserName || null,
       connectedAt: connection.connectedAt,
       assetCount: connection.assets.length,
       lastSessionToken: state.sessionToken,
-      mode: getProvider(providerId)?.mode || 'demo',
-    });
+      mode: provider?.mode || 'demo',
+    }, state.workspaceId);
   }
 
   response.writeHead(302, {
@@ -688,23 +695,24 @@ export async function route(request, response) {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
     }
-    return json(response, 200, { providers: listProviders() });
+    return json(response, 200, { providers: await listProviders() });
   }
 
   if (pathname === '/api/admin/providers') {
     if (request.method === 'GET') {
-      return json(response, 200, providerSettingsResponse());
+      return json(response, 200, await providerSettingsResponse());
     }
 
     if (request.method === 'POST') {
       const body = await request.json();
       const providerId = body.providerId;
-      if (!getProvider(providerId)) {
+      if (!(await getProvider(providerId))) {
         return badRequest(response, 'Unsupported provider');
       }
       const nextSettings = normalizeProviderSettings(providerId, body);
-      store.updateProviderSettings(providerId, nextSettings);
-      return json(response, 200, providerSettingsResponse());
+      const workspaceId = await getCurrentWorkspaceId();
+      await store.updateProviderSettings(providerId, nextSettings, workspaceId);
+      return json(response, 200, await providerSettingsResponse());
     }
 
     return methodNotAllowed(response, ['GET', 'POST']);
@@ -713,10 +721,11 @@ export async function route(request, response) {
   if (pathname === '/api/admin/operator-session' && request.method === 'POST') {
     const body = await request.json();
     const providerId = body.providerId;
-    if (!getProvider(providerId)) {
+    if (!(await getProvider(providerId))) {
       return badRequest(response, 'Unsupported provider');
     }
-    const session = store.createLinkSession({
+    const workspaceId = await getCurrentWorkspaceId();
+    const session = await store.createLinkSession({
       partnerId: 'partner_operator',
       partnerName: 'Internal Operator',
       clientName: 'Operator Self Connect',
@@ -726,18 +735,19 @@ export async function route(request, response) {
         source: 'settings',
         mode: 'operator-self-connect',
       },
-    });
-    return json(response, 201, sessionSummary(session));
+    }, workspaceId);
+    return json(response, 201, await sessionSummary(session));
   }
 
   if (pathname === '/api/admin/operator-connections' && request.method === 'GET') {
-    return json(response, 200, { connections: store.listOperatorConnections() });
+    const workspaceId = await getCurrentWorkspaceId();
+    return json(response, 200, { connections: await store.listOperatorConnections(workspaceId) });
   }
 
   if (pathname === '/api/admin/client-link-sessions') {
     if (request.method === 'GET') {
       return json(response, 200, {
-        sessions: store.listLinkSessionsBySource('client-link-builder').map(sessionSummary),
+        sessions: await Promise.all((await store.listLinkSessionsBySource('client-link-builder', await getCurrentWorkspaceId())).map((session) => sessionSummary(session))),
       });
     }
 
@@ -754,7 +764,8 @@ export async function route(request, response) {
         return badRequest(response, 'Select at least one provider');
       }
 
-      const session = store.createLinkSession({
+      const workspaceId = await getCurrentWorkspaceId();
+    const session = await store.createLinkSession({
         partnerId: body.partnerId,
         partnerName: body.partnerName,
         clientName: body.clientName,
@@ -765,8 +776,8 @@ export async function route(request, response) {
           requestedAccess: Array.isArray(body.requestedAccess) ? body.requestedAccess : [],
           notes: body.notes || '',
         },
-      });
-      return json(response, 201, sessionSummary(session));
+      }, workspaceId);
+      return json(response, 201, await sessionSummary(session));
     }
 
     return methodNotAllowed(response, ['GET', 'POST']);
@@ -781,11 +792,11 @@ export async function route(request, response) {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
     }
-    const session = store.getLinkSessionByToken(sessionMatch[1]);
+    const session = await store.getLinkSessionByToken(sessionMatch[1], await getCurrentWorkspaceId());
     if (!validateSession(session, response)) {
       return;
     }
-    return json(response, 200, sessionSummary(session));
+    return json(response, 200, await sessionSummary(session));
   }
 
   const connectionMatch = pathname.match(/^\/api\/link-sessions\/([^/]+)\/connections$/);
@@ -809,7 +820,7 @@ export async function route(request, response) {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
     }
-    return json(response, 200, { grants: store.listPartnerGrants(partnerGrantMatch[1]) });
+    return json(response, 200, { grants: await store.listPartnerGrants(partnerGrantMatch[1], await getCurrentWorkspaceId()) });
   }
 
   const oauthMatch = pathname.match(/^\/oauth\/([^/]+)\/callback$/);
@@ -825,11 +836,11 @@ export async function route(request, response) {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
     }
-    const session = store.getLinkSessionByToken(linkMatch[1]);
+    const session = await store.getLinkSessionByToken(linkMatch[1], await getCurrentWorkspaceId());
     if (!validateSession(session, response)) {
       return;
     }
-    return html(response, 200, renderLinkPage(session));
+    return html(response, 200, await renderLinkPage(session));
   }
 
   return notFound(response);
