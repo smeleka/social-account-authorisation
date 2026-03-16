@@ -40,6 +40,8 @@ components:
       description: |
         Machine-to-machine API token header for trusted backend consumers such as
         Things to Post. The exact header name can be changed with API_AUTH_HEADER_NAME.
+        Configured tokens can be supplied as a single value, comma-separated list,
+        newline-separated list, or JSON array of strings.
   schemas:
     ErrorResponse:
       type: object

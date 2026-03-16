@@ -6,6 +6,47 @@ function csv(value) {
   return value ? value.split(',').map((item) => item.trim()).filter(Boolean) : [];
 }
 
+function stripWrappingQuotes(value) {
+  if (!value) {
+    return '';
+  }
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function authTokens(value) {
+  if (!value) {
+    return [];
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => stripWrappingQuotes(String(item))).filter(Boolean);
+      }
+    } catch {
+      // Fall through to plain-text parsing.
+    }
+  }
+
+  return trimmed
+    .split(/[\n,]/)
+    .map((item) => stripWrappingQuotes(item))
+    .filter(Boolean);
+}
+
 function bool(value, fallback = false) {
   if (value == null || value === '') {
     return fallback;
@@ -68,13 +109,14 @@ export const config = {
   })(),
   apiAuth: (() => {
     const headerName = (env.API_AUTH_HEADER_NAME || 'x-ttp-auth').toLowerCase();
-    const tokens = csv(env.API_AUTH_TOKENS || env.API_AUTH_TOKEN || '');
+    const tokens = authTokens(env.API_AUTH_TOKENS || env.API_AUTH_TOKEN || '');
     const configured = tokens.length > 0;
     return {
       headerName,
       tokens,
       configured,
       enabled: bool(env.API_AUTH_ENABLED, configured) && configured,
+      debug: bool(env.API_AUTH_DEBUG, false),
     };
   })(),
   defaultWorkspace: {

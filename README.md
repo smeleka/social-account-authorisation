@@ -95,7 +95,17 @@ Environment variables:
 
 - `API_AUTH_ENABLED=true`
 - `API_AUTH_HEADER_NAME=x-ttp-auth`
-- `API_AUTH_TOKENS=<comma-separated-token-list>`
+- `API_AUTH_TOKENS=<token list>`
+- `API_AUTH_DEBUG=false`
+
+Accepted token formats for `API_AUTH_TOKENS`:
+
+- single plain token
+- comma-separated tokens
+- newline-separated tokens
+- JSON array of strings
+
+Surrounding single or double quotes are stripped from configured tokens and presented header values.
 
 Behavior:
 
@@ -105,6 +115,16 @@ Behavior:
   - the configured API token header
 
 This makes it possible for another backend service to create and inspect client sessions without using a browser login flow.
+
+If you need to debug integration issues, set `API_AUTH_DEBUG=true` temporarily. The service will log:
+
+- parsed header name
+- number of configured tokens
+- masked token fingerprints
+- whether a request header was present
+- whether any configured token matched
+
+It does not log the full raw token value.
 
 ## Current storage mode
 
