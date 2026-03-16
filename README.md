@@ -86,6 +86,26 @@ Recommended Railway variables:
 
 Public client approval links remain accessible without admin login.
 
+## Service API auth
+
+Protected API routes can also be accessed with a machine-to-machine API token.
+This is intended for trusted consumers such as Things to Post.
+
+Environment variables:
+
+- `API_AUTH_ENABLED=true`
+- `API_AUTH_HEADER_NAME=x-ttp-auth`
+- `API_AUTH_TOKENS=<comma-separated-token-list>`
+
+Behavior:
+
+- browser/admin pages still use admin session login
+- protected API routes accept either:
+  - admin session cookie, or
+  - the configured API token header
+
+This makes it possible for another backend service to create and inspect client sessions without using a browser login flow.
+
 ## Current storage mode
 
 The app now supports two storage backends:

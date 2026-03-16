@@ -66,6 +66,17 @@ export const config = {
       enabled: bool(env.ADMIN_AUTH_ENABLED, configured) && configured,
     };
   })(),
+  apiAuth: (() => {
+    const headerName = (env.API_AUTH_HEADER_NAME || 'x-ttp-auth').toLowerCase();
+    const tokens = csv(env.API_AUTH_TOKENS || env.API_AUTH_TOKEN || '');
+    const configured = tokens.length > 0;
+    return {
+      headerName,
+      tokens,
+      configured,
+      enabled: bool(env.API_AUTH_ENABLED, configured) && configured,
+    };
+  })(),
   defaultWorkspace: {
     id: env.DEFAULT_WORKSPACE_ID || 'ws_default',
     slug: env.DEFAULT_WORKSPACE_SLUG || 'default',

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { exchangeAuthorizationCode, getProvider, listProviders, createAuthorizationUrl, listProviderSettingsForAdmin, serializeConnection } from './providers/index.js';
 import { clearAdminSessionCookie, createAdminSessionCookie, isAdminAuthEnabled, verifyAdminCredentials, verifyAdminRequest } from './auth/admin.js';
+import { isApiAuthEnabled, verifyApiTokenRequest } from './auth/api.js';
 import { getCurrentWorkspaceId } from './lib/context.js';
 import { store } from './lib/store.js';
 import { addMinutes, badRequest, generateId, html, json, methodNotAllowed, notFound, nowIso, readTextBody } from './lib/utils.js';
@@ -61,7 +62,11 @@ function redirectToLogin(response) {
   response.end();
 }
 
-function requireAdmin(request, response) {
+function isPrivilegedProtectionEnabled() {
+  return isAdminAuthEnabled() || isApiAuthEnabled();
+}
+
+function requireAdminPage(request, response) {
   if (!isAdminAuthEnabled()) {
     return true;
   }
@@ -76,6 +81,31 @@ function requireAdmin(request, response) {
   } else {
     redirectToLogin(response);
   }
+  return false;
+}
+
+function requireApiAccess(request, response) {
+  if (!isPrivilegedProtectionEnabled()) {
+    return true;
+  }
+
+  const adminAuth = isAdminAuthEnabled() ? verifyAdminRequest(request) : { ok: false, reason: 'disabled' };
+  if (adminAuth.ok) {
+    return true;
+  }
+
+  const apiAuth = verifyApiTokenRequest(request);
+  if (apiAuth.ok) {
+    return true;
+  }
+
+  json(response, 401, {
+    error: 'Protected API authentication required',
+    acceptedAuth: {
+      adminSessionCookie: isAdminAuthEnabled(),
+      apiTokenHeader: isApiAuthEnabled() ? config.apiAuth.headerName : null,
+    },
+  });
   return false;
 }
 
@@ -794,7 +824,7 @@ export async function route(request, response) {
 
   if (pathname === '/login') {
     if (request.method === 'GET') {
-      if (verifyAdminRequest(request).ok) {
+      if (isAdminAuthEnabled() && verifyAdminRequest(request).ok) {
         response.writeHead(302, {
           location: '/operator',
           'cache-control': 'no-store',
@@ -850,7 +880,7 @@ export async function route(request, response) {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
     }
-    if (!requireAdmin(request, response)) {
+    if (!requireAdminPage(request, response)) {
       return;
     }
     return html(response, 200, renderSettingsPage());
@@ -860,7 +890,7 @@ export async function route(request, response) {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
     }
-    if (!requireAdmin(request, response)) {
+    if (!requireAdminPage(request, response)) {
       return;
     }
     return html(response, 200, renderOperatorPage());
@@ -870,7 +900,7 @@ export async function route(request, response) {
     if (request.method !== 'GET') {
       return methodNotAllowed(response, ['GET']);
     }
-    if (!requireAdmin(request, response)) {
+    if (!requireAdminPage(request, response)) {
       return;
     }
     return html(response, 200, renderClientsPage());
@@ -923,7 +953,7 @@ export async function route(request, response) {
   }
 
   if (pathname === '/api/admin/providers') {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     if (request.method === 'GET') {
@@ -946,7 +976,7 @@ export async function route(request, response) {
   }
 
   if (pathname === '/api/admin/operator-session' && request.method === 'POST') {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     const body = await request.json();
@@ -959,7 +989,7 @@ export async function route(request, response) {
   }
 
   if (pathname === '/api/admin/operator-connections' && request.method === 'GET') {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     const workspaceId = await getCurrentWorkspaceId();
@@ -967,7 +997,7 @@ export async function route(request, response) {
   }
 
   if (pathname === '/api/admin/client-link-sessions') {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     if (request.method === 'GET') {
@@ -1002,7 +1032,7 @@ export async function route(request, response) {
   }
 
   if (pathname === '/api/operator/connections') {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
 
@@ -1036,7 +1066,7 @@ export async function route(request, response) {
 
   const operatorConnectionMatch = pathname.match(/^\/api\/operator\/connections\/([^/]+)$/);
   if (operatorConnectionMatch) {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     if (request.method !== 'GET') {
@@ -1051,7 +1081,7 @@ export async function route(request, response) {
   }
 
   if (pathname === '/api/client-sessions' && request.method === 'POST') {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     const workspaceId = await getCurrentWorkspaceId();
@@ -1064,7 +1094,7 @@ export async function route(request, response) {
 
   const clientSessionByIdMatch = pathname.match(/^\/api\/client-sessions\/([^/]+)$/);
   if (clientSessionByIdMatch) {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     if (request.method !== 'GET') {
@@ -1091,7 +1121,7 @@ export async function route(request, response) {
 
   const clientSessionStatusMatch = pathname.match(/^\/api\/client-sessions\/([^/]+)\/status$/);
   if (clientSessionStatusMatch) {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     if (request.method !== 'GET') {
@@ -1106,7 +1136,7 @@ export async function route(request, response) {
 
   const clientSessionGrantsMatch = pathname.match(/^\/api\/client-sessions\/([^/]+)\/grants$/);
   if (clientSessionGrantsMatch) {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     if (request.method !== 'GET') {
@@ -1121,7 +1151,7 @@ export async function route(request, response) {
 
   const clientSessionAssetsMatch = pathname.match(/^\/api\/client-sessions\/([^/]+)\/assets$/);
   if (clientSessionAssetsMatch) {
-    if (!requireAdmin(request, response)) {
+    if (!requireApiAccess(request, response)) {
       return;
     }
     if (request.method !== 'GET') {
