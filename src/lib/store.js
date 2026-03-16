@@ -123,6 +123,11 @@ class JsonStore {
     return clone(session);
   }
 
+  async getLinkSessionById(id, workspaceId) {
+    const session = this.state.linkSessions.find((item) => item.id === id && item.workspaceId === workspaceId) || null;
+    return clone(session);
+  }
+
   async updateLinkSession(token, workspaceId, updater) {
     const session = this.state.linkSessions.find((item) => item.token === token && item.workspaceId === workspaceId);
     if (!session) {
@@ -164,6 +169,10 @@ class JsonStore {
     return clone(this.state.partnerGrants.filter((grant) => grant.partnerId === partnerId && grant.workspaceId === workspaceId));
   }
 
+  async listGrantsBySessionId(sessionId, workspaceId) {
+    return clone(this.state.partnerGrants.filter((grant) => grant.sessionId === sessionId && grant.workspaceId === workspaceId));
+  }
+
   async getProviderSettings(workspaceId) {
     return clone(this.state.providerSettings[workspaceId] || {});
   }
@@ -194,6 +203,11 @@ class JsonStore {
 
   async listOperatorConnections(workspaceId) {
     return clone(this.state.operatorConnections.filter((item) => item.workspaceId === workspaceId));
+  }
+
+  async getOperatorConnection(providerId, workspaceId) {
+    const connection = this.state.operatorConnections.find((item) => item.providerId === providerId && item.workspaceId === workspaceId) || null;
+    return clone(connection);
   }
 
   async listLinkSessionsBySource(source, workspaceId) {
@@ -291,6 +305,11 @@ class PostgresStore {
     return result.rows[0]?.data || null;
   }
 
+  async getLinkSessionById(id, workspaceId) {
+    const result = await this.pool.query('SELECT data FROM client_sessions WHERE data->>\'id\' = $1 AND workspace_id = $2 LIMIT 1', [id, workspaceId]);
+    return result.rows[0]?.data || null;
+  }
+
   async updateLinkSession(token, workspaceId, updater) {
     const session = await this.getLinkSessionByToken(token, workspaceId);
     if (!session) {
@@ -325,6 +344,11 @@ class PostgresStore {
     return result.rows.map((row) => row.data);
   }
 
+  async listGrantsBySessionId(sessionId, workspaceId) {
+    const result = await this.pool.query('SELECT data FROM partner_grants WHERE data->>\'sessionId\' = $1 AND workspace_id = $2 ORDER BY grant_id ASC', [sessionId, workspaceId]);
+    return result.rows.map((row) => row.data);
+  }
+
   async getProviderSettings(workspaceId) {
     const result = await this.pool.query('SELECT provider_id, data FROM provider_credentials WHERE workspace_id = $1', [workspaceId]);
     return Object.fromEntries(result.rows.map((row) => [row.provider_id, row.data]));
@@ -353,6 +377,11 @@ class PostgresStore {
   async listOperatorConnections(workspaceId) {
     const result = await this.pool.query('SELECT data FROM operator_connections WHERE workspace_id = $1 ORDER BY provider_id ASC', [workspaceId]);
     return result.rows.map((row) => row.data);
+  }
+
+  async getOperatorConnection(providerId, workspaceId) {
+    const result = await this.pool.query('SELECT data FROM operator_connections WHERE workspace_id = $1 AND provider_id = $2 LIMIT 1', [workspaceId, providerId]);
+    return result.rows[0]?.data || null;
   }
 
   async listLinkSessionsBySource(source, workspaceId) {

@@ -31,6 +31,25 @@ Server defaults to `http://localhost:3000`.
 - `/settings` advanced provider app setup for self-hosting
 - `/health` health check
 
+## API surfaces
+
+Current API groups:
+
+- Admin:
+  - `GET/POST /api/admin/providers`
+- Operator:
+  - `GET/POST /api/operator/connections`
+  - `GET /api/operator/connections/:providerId`
+- Client sessions:
+  - `POST /api/client-sessions`
+  - `GET /api/client-sessions/:id`
+  - `GET /api/client-sessions/:id/status`
+  - `GET /api/client-sessions/:id/assets`
+  - `GET /api/client-sessions/:id/grants`
+  - `GET /api/client-sessions/token/:token`
+
+Legacy `link-sessions` routes are still available so the existing UI keeps working while the API surface is being cleaned up.
+
 
 
 ## Admin auth

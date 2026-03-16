@@ -100,6 +100,80 @@ async function sessionSummary(session) {
   };
 }
 
+function sessionAssets(session) {
+  return session.connections.flatMap((connection) =>
+    connection.assets.map((asset) => ({
+      providerId: connection.providerId,
+      assetId: asset.id,
+      assetName: asset.name,
+      assetType: asset.type,
+      connectionId: connection.id,
+    }))
+  );
+}
+
+function sessionStatusSummary(session) {
+  return {
+    id: session.id,
+    token: session.token,
+    status: session.status,
+    createdAt: session.createdAt,
+    expiresAt: session.expiresAt,
+    requestedProviders: session.requestedProviders,
+    connectedProviderIds: session.connections.map((connection) => connection.providerId),
+    connectionCount: session.connections.length,
+    assetCount: session.connections.reduce((total, connection) => total + connection.assets.length, 0),
+    grantCount: session.grants.length,
+    completedAt: session.status === 'authorized' ? session.grants[0]?.grantedAt || null : null,
+  };
+}
+
+async function createClientSession(input, workspaceId) {
+  const required = ['partnerId', 'partnerName', 'clientName', 'clientEmail'];
+  const missing = required.filter((field) => !input[field]);
+  if (missing.length > 0) {
+    return { error: 'Missing required fields', details: missing, status: 400 };
+  }
+
+  const requestedProviders = Array.isArray(input.requestedProviders) && input.requestedProviders.length > 0
+    ? input.requestedProviders
+    : ['facebook'];
+
+  const availableProviders = await listProviders();
+  const invalidProviders = requestedProviders.filter((providerId) => !availableProviders.find((provider) => provider.id === providerId));
+  if (invalidProviders.length > 0) {
+    return { error: 'Unsupported providers requested', details: invalidProviders, status: 400 };
+  }
+
+  const session = await store.createLinkSession({
+    ...input,
+    requestedProviders,
+  }, workspaceId);
+
+  return { session };
+}
+
+async function createOperatorSession(providerId, workspaceId, source = 'settings') {
+  const provider = await getProvider(providerId);
+  if (!provider) {
+    return { error: 'Unsupported provider', status: 400 };
+  }
+
+  const session = await store.createLinkSession({
+    partnerId: 'partner_operator',
+    partnerName: 'Internal Operator',
+    clientName: 'Operator Self Connect',
+    clientEmail: 'operator@local.test',
+    requestedProviders: [providerId],
+    metadata: {
+      source,
+      mode: 'operator-self-connect',
+    },
+  }, workspaceId);
+
+  return { session, provider };
+}
+
 function validateSession(session, response) {
   if (!session) {
     notFound(response, 'Link session not found');
@@ -464,29 +538,13 @@ function serveStaticAsset(response, assetPath, contentType) {
 
 async function handleCreateSession(request, response) {
   const body = await request.json();
-  const required = ['partnerId', 'partnerName', 'clientName', 'clientEmail'];
-  const missing = required.filter((field) => !body[field]);
-  if (missing.length > 0) {
-    return badRequest(response, 'Missing required fields', missing);
-  }
-
-  const requestedProviders = Array.isArray(body.requestedProviders) && body.requestedProviders.length > 0
-    ? body.requestedProviders
-    : ['facebook'];
-
-  const availableProviders = await listProviders();
-  const invalidProviders = requestedProviders.filter((providerId) => !availableProviders.find((provider) => provider.id === providerId));
-  if (invalidProviders.length > 0) {
-    return badRequest(response, 'Unsupported providers requested', invalidProviders);
-  }
-
   const workspaceId = await getCurrentWorkspaceId();
-  const session = await store.createLinkSession({
-    ...body,
-    requestedProviders,
-  }, workspaceId);
+  const result = await createClientSession(body, workspaceId);
+  if (result.error) {
+    return badRequest(response, result.error, result.details);
+  }
 
-  return json(response, 201, await sessionSummary(session));
+  return json(response, 201, await sessionSummary(result.session));
 }
 
 async function handleCreateConnection(request, response, token) {
@@ -849,23 +907,12 @@ export async function route(request, response) {
       return;
     }
     const body = await request.json();
-    const providerId = body.providerId;
-    if (!(await getProvider(providerId))) {
-      return badRequest(response, 'Unsupported provider');
-    }
     const workspaceId = await getCurrentWorkspaceId();
-    const session = await store.createLinkSession({
-      partnerId: 'partner_operator',
-      partnerName: 'Internal Operator',
-      clientName: 'Operator Self Connect',
-      clientEmail: 'operator@local.test',
-      requestedProviders: [providerId],
-      metadata: {
-        source: 'settings',
-        mode: 'operator-self-connect',
-      },
-    }, workspaceId);
-    return json(response, 201, await sessionSummary(session));
+    const result = await createOperatorSession(body.providerId, workspaceId, 'settings');
+    if (result.error) {
+      return badRequest(response, result.error);
+    }
+    return json(response, 201, await sessionSummary(result.session));
   }
 
   if (pathname === '/api/admin/operator-connections' && request.method === 'GET') {
@@ -920,6 +967,139 @@ export async function route(request, response) {
 
   if (pathname === '/api/link-sessions' && request.method === 'POST') {
     return handleCreateSession(request, response);
+  }
+
+  if (pathname === '/api/operator/connections') {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
+
+    if (request.method === 'GET') {
+      const workspaceId = await getCurrentWorkspaceId();
+      const connections = await store.listOperatorConnections(workspaceId);
+      return json(response, 200, { connections });
+    }
+
+    if (request.method === 'POST') {
+      const body = await request.json();
+      const workspaceId = await getCurrentWorkspaceId();
+      const result = await createOperatorSession(body.providerId, workspaceId, 'operator-api');
+      if (result.error) {
+        return badRequest(response, result.error);
+      }
+      return json(response, 201, {
+        connectionRequest: {
+          providerId: body.providerId,
+          sessionId: result.session.id,
+          sessionToken: result.session.token,
+          launchUrl: `${config.baseUrl}/link/${result.session.token}`,
+          status: result.session.status,
+        },
+        session: await sessionSummary(result.session),
+      });
+    }
+
+    return methodNotAllowed(response, ['GET', 'POST']);
+  }
+
+  const operatorConnectionMatch = pathname.match(/^\/api\/operator\/connections\/([^/]+)$/);
+  if (operatorConnectionMatch) {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
+    if (request.method !== 'GET') {
+      return methodNotAllowed(response, ['GET']);
+    }
+    const workspaceId = await getCurrentWorkspaceId();
+    const connection = await store.getOperatorConnection(operatorConnectionMatch[1], workspaceId);
+    if (!connection) {
+      return notFound(response, 'Operator connection not found');
+    }
+    return json(response, 200, { connection });
+  }
+
+  if (pathname === '/api/client-sessions' && request.method === 'POST') {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
+    const workspaceId = await getCurrentWorkspaceId();
+    const result = await createClientSession(await request.json(), workspaceId);
+    if (result.error) {
+      return badRequest(response, result.error, result.details);
+    }
+    return json(response, 201, await sessionSummary(result.session));
+  }
+
+  const clientSessionByIdMatch = pathname.match(/^\/api\/client-sessions\/([^/]+)$/);
+  if (clientSessionByIdMatch) {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
+    if (request.method !== 'GET') {
+      return methodNotAllowed(response, ['GET']);
+    }
+    const session = await store.getLinkSessionById(clientSessionByIdMatch[1], await getCurrentWorkspaceId());
+    if (!session) {
+      return notFound(response, 'Client session not found');
+    }
+    return json(response, 200, await sessionSummary(session));
+  }
+
+  const clientSessionByTokenMatch = pathname.match(/^\/api\/client-sessions\/token\/([^/]+)$/);
+  if (clientSessionByTokenMatch) {
+    if (request.method !== 'GET') {
+      return methodNotAllowed(response, ['GET']);
+    }
+    const session = await store.getLinkSessionByToken(clientSessionByTokenMatch[1], await getCurrentWorkspaceId());
+    if (!validateSession(session, response)) {
+      return;
+    }
+    return json(response, 200, await sessionSummary(session));
+  }
+
+  const clientSessionStatusMatch = pathname.match(/^\/api\/client-sessions\/([^/]+)\/status$/);
+  if (clientSessionStatusMatch) {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
+    if (request.method !== 'GET') {
+      return methodNotAllowed(response, ['GET']);
+    }
+    const session = await store.getLinkSessionById(clientSessionStatusMatch[1], await getCurrentWorkspaceId());
+    if (!session) {
+      return notFound(response, 'Client session not found');
+    }
+    return json(response, 200, { session: sessionStatusSummary(session) });
+  }
+
+  const clientSessionGrantsMatch = pathname.match(/^\/api\/client-sessions\/([^/]+)\/grants$/);
+  if (clientSessionGrantsMatch) {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
+    if (request.method !== 'GET') {
+      return methodNotAllowed(response, ['GET']);
+    }
+    const session = await store.getLinkSessionById(clientSessionGrantsMatch[1], await getCurrentWorkspaceId());
+    if (!session) {
+      return notFound(response, 'Client session not found');
+    }
+    return json(response, 200, { grants: await store.listGrantsBySessionId(session.id, await getCurrentWorkspaceId()) });
+  }
+
+  const clientSessionAssetsMatch = pathname.match(/^\/api\/client-sessions\/([^/]+)\/assets$/);
+  if (clientSessionAssetsMatch) {
+    if (!requireAdmin(request, response)) {
+      return;
+    }
+    if (request.method !== 'GET') {
+      return methodNotAllowed(response, ['GET']);
+    }
+    const session = await store.getLinkSessionById(clientSessionAssetsMatch[1], await getCurrentWorkspaceId());
+    if (!session) {
+      return notFound(response, 'Client session not found');
+    }
+    return json(response, 200, { assets: sessionAssets(session) });
   }
 
   const sessionMatch = pathname.match(/^\/api\/link-sessions\/([^/]+)$/);
